@@ -1,0 +1,137 @@
+#3F Sign 
+# Step 1: Import libraries
+import numpy as np
+import pandas as pd
+import matplotlib.pyplot as plt
+
+from sklearn.model_selection import train_test_split
+from sklearn.metrics import classification_report, confusion_matrix
+
+from tensorflow.keras import models, layers
+
+# Step 2: Load dataset
+train = pd.read_csv("sign_mnist_train.csv")
+test = pd.read_csv("sign_mnist_test.csv")
+
+# Select label 24 (Y) as anomaly
+anomaly_label = 24
+
+# Separate normal training data (remaining 23 classes)
+x_normal = train[train["label"] != anomaly_label].drop(
+    "label", axis=1
+).values / 255.0
+
+# Split normal data into training and validation
+x_train, x_val = train_test_split(
+    x_normal, test_size=0.1, random_state=42
+)
+
+# Prepare test data
+x_test = test.drop("label", axis=1).values / 255.0
+
+# Actual labels: 0 = Normal, 1 = Anomaly (Y)
+y_test = (test["label"] == anomaly_label).astype(int)
+
+# Step 3: Build Encoder
+encoder = models.Sequential([
+    layers.Input(shape=(x_train.shape[1],)),
+    layers.Dense(20, activation="relu"),
+    layers.Dense(14, activation="relu"),
+    layers.Dense(8, activation="relu"),
+    layers.Dense(4, activation="relu")
+])
+
+# Step 4: Build Decoder
+decoder = models.Sequential([
+    layers.Input(shape=(4,)),
+    layers.Dense(8, activation="relu"),
+    layers.Dense(14, activation="relu"),
+    layers.Dense(20, activation="relu"),
+    layers.Dense(x_train.shape[1], activation="linear")
+])
+
+# Combine Encoder and Decoder
+autoencoder = models.Sequential([encoder, decoder])
+
+# Step 5: Compile model
+autoencoder.compile(
+    optimizer="adam",
+    loss="mse",
+    metrics=["mae"]
+)
+
+autoencoder.summary()
+
+# Step 6: Train model only on normal data
+history = autoencoder.fit(
+    x_train, x_train,
+    validation_data=(x_val, x_val),
+    epochs=20,
+    batch_size=512,
+    shuffle=True,
+    verbose=2
+)
+
+# Step 7: Calculate validation reconstruction error
+val_predictions = autoencoder.predict(x_val, verbose=0)
+
+val_errors = np.mean(
+    (x_val - val_predictions) ** 2, axis=1
+)
+
+# Set threshold
+threshold = np.percentile(val_errors, 99)
+
+print("Anomaly Threshold:", threshold)
+
+# Step 8: Calculate test reconstruction error
+test_predictions = autoencoder.predict(x_test, verbose=0)
+
+test_errors = np.mean(
+    (x_test - test_predictions) ** 2, axis=1
+)
+
+# Detect anomalies
+y_pred = (test_errors > threshold).astype(int)
+
+# Step 9: Evaluate model
+print("\nConfusion Matrix:")
+print(confusion_matrix(y_test, y_pred))
+
+print("\nClassification Report:")
+print(classification_report(
+    y_test,
+    y_pred,
+    target_names=["Normal", "Anomaly (Y)"],
+    zero_division=0
+))
+
+print("Number of anomalies detected:", np.sum(y_pred))
+
+# Step 10: Plot training and validation loss
+plt.plot(history.history["loss"], label="Training Loss")
+plt.plot(history.history["val_loss"], label="Validation Loss")
+
+plt.title("Autoencoder Training Loss")
+plt.xlabel("Epochs")
+plt.ylabel("MSE Loss")
+plt.legend()
+plt.show()
+
+# Step 11: Plot reconstruction errors
+plt.figure(figsize=(10, 5))
+
+plt.hist(test_errors[y_test.values == 0],
+         bins=50, alpha=0.6, label="Normal")
+
+plt.hist(test_errors[y_test.values == 1],
+         bins=50, alpha=0.6, label="Anomaly (Y)")
+
+plt.axvline(threshold, color="red",
+            linestyle="--", label="Threshold")
+
+plt.title("Normal vs Anomaly Reconstruction Errors")
+plt.xlabel("Reconstruction Error")
+plt.ylabel("Frequency")
+plt.legend()
+plt.show()

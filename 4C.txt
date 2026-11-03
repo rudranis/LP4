@@ -1,0 +1,104 @@
+#4C documnet3
+# Step 1: Import libraries
+import numpy as np
+import tensorflow as tf
+
+from tensorflow.keras.preprocessing.text import Tokenizer
+from tensorflow.keras.utils import to_categorical
+from tensorflow.keras.models import Sequential
+from tensorflow.keras.layers import Embedding, Dense, Lambda
+
+# Step 2: Load document
+with open("document3.txt", "r", encoding="utf-8") as file:
+    text = file.read().lower()
+
+# Step 3: Tokenize text
+tokenizer = Tokenizer()
+tokenizer.fit_on_texts([text])
+
+words = tokenizer.texts_to_sequences([text])[0]
+
+vocab_size = len(tokenizer.word_index) + 1
+
+print("Total words:", len(words))
+print("Vocabulary size:", vocab_size)
+
+# Step 4: Create context and target words
+context = []
+target = []
+
+window = 2
+
+for i in range(window, len(words) - window):
+    context.append(
+        words[i-window:i] + words[i+1:i+window+1]
+    )
+    target.append(words[i])
+
+context = np.array(context)
+
+target = to_categorical(
+    target, num_classes=vocab_size
+)
+
+print("Context Shape:", context.shape)
+print("Target Shape:", target.shape)
+
+# Step 5: Build CBOW model
+model = Sequential([
+    Embedding(vocab_size, 100),
+    tf.keras.layers.GlobalAveragePooling1D(),
+    Dense(vocab_size, activation="softmax")
+])
+
+# Step 6: Compile model
+model.compile(
+    optimizer="adam",
+    loss="categorical_crossentropy",
+    metrics=["accuracy"]
+)
+
+model.summary()
+
+# Step 7: Train model
+model.fit(
+    context, target,
+    epochs=100,
+    verbose=1
+)
+
+# Step 8: Evaluate model
+loss, accuracy = model.evaluate(context, target)
+
+print("Loss:", loss)
+print("Accuracy:", accuracy)
+
+# Step 9: Predict target words
+predictions = model.predict(context[:5])
+
+print("\nCBOW Model Output:")
+
+for i in range(5):
+    predicted_word = tokenizer.index_word[
+        np.argmax(predictions[i])
+    ]
+
+    actual_word = tokenizer.index_word[
+        np.argmax(target[i])
+    ]
+
+    print("Actual:", actual_word,
+          "| Predicted:", predicted_word)
+
+# Step 10: Display word embedding
+embeddings = model.layers[0].get_weights()[0]
+
+word = "influenza"
+
+if word in tokenizer.word_index:
+    index = tokenizer.word_index[word]
+
+    print("\nEmbedding of", word, ":")
+    print(embeddings[index][:10])
+else:
+    print("Word not found in vocabulary")

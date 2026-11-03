@@ -1,0 +1,125 @@
+# Practical 3A: Credit Card Fraud Detection using Autoencoder
+
+# Step 1: Import libraries
+import pandas as pd
+import numpy as np
+import matplotlib.pyplot as plt
+
+from sklearn.model_selection import train_test_split
+from sklearn.preprocessing import StandardScaler
+from sklearn.metrics import classification_report, confusion_matrix
+
+from tensorflow.keras.models import Model
+from tensorflow.keras.layers import Input, Dense
+
+# Step 2: Load dataset
+data = pd.read_csv("creditcard.csv")
+
+print("Dataset Shape:", data.shape)
+print(data.head())
+
+# Step 3: Separate features and labels
+X = data.drop("Class", axis=1)
+y = data["Class"]
+
+# Step 4: Separate normal and fraud transactions
+normal_data = X[y == 0]
+fraud_data = X[y == 1]
+
+# Split normal data into training, validation and testing
+X_train, X_temp = train_test_split(
+    normal_data, test_size=0.30, random_state=42
+)
+
+X_val, X_normal_test = train_test_split(
+    X_temp, test_size=0.50, random_state=42
+)
+
+# Step 5: Scale the data
+scaler = StandardScaler()
+
+X_train = scaler.fit_transform(X_train)
+X_val = scaler.transform(X_val)
+X_normal_test = scaler.transform(X_normal_test)
+X_fraud = scaler.transform(fraud_data)
+
+# Step 6: Prepare testing data
+X_test = np.concatenate([X_normal_test, X_fraud])
+
+y_test = np.concatenate([
+    np.zeros(len(X_normal_test)),
+    np.ones(len(X_fraud))
+])
+
+# Step 7: Build Autoencoder
+input_layer = Input(shape=(X_train.shape[1],))
+
+encoded = Dense(16, activation="relu")(input_layer)
+encoded = Dense(8, activation="relu")(encoded)
+
+decoded = Dense(16, activation="relu")(encoded)
+output_layer = Dense(X_train.shape[1], activation="linear")(decoded)
+
+autoencoder = Model(input_layer, output_layer)
+
+# Step 8: Compile model
+autoencoder.compile(
+    optimizer="adam",
+    loss="mse",
+    metrics=["mae"]
+)
+
+# Step 9: Train model using normal transactions
+history = autoencoder.fit(
+    X_train,
+    X_train,
+    epochs=10,
+    batch_size=32,
+    validation_data=(X_val, X_val)
+)
+
+# Step 10: Calculate validation reconstruction errors
+val_predictions = autoencoder.predict(X_val, verbose=0)
+
+val_errors = np.mean((X_val - val_predictions) ** 2, axis=1)
+
+# Step 11: Set threshold
+threshold = np.percentile(val_errors, 95)
+
+print("Fraud Detection Threshold:", threshold)
+
+# Step 12: Detect fraud in test data
+test_predictions = autoencoder.predict(X_test, verbose=0)
+
+test_errors = np.mean((X_test - test_predictions) ** 2, axis=1)
+
+y_pred = (test_errors > threshold).astype(int)
+
+# Step 13: Evaluate model
+print("\nConfusion Matrix:")
+print(confusion_matrix(y_test, y_pred))
+
+print("\nClassification Report:")
+print(classification_report(y_test, y_pred))
+
+# Step 14: Plot training and validation loss
+plt.plot(history.history["loss"], label="Training Loss")
+plt.plot(history.history["val_loss"], label="Validation Loss")
+
+plt.title("Autoencoder Training Loss")
+plt.xlabel("Epoch")
+plt.ylabel("MSE Loss")
+plt.legend()
+plt.show()
+
+plt.plot(test_errors, label="Reconstruction Error")
+
+plt.axhline(threshold, color="red",
+            linestyle="--", label="Threshold")
+
+plt.title("Credit Card Fraud Detection")
+plt.xlabel("Test Transaction")
+plt.ylabel("Reconstruction Error")
+
+plt.legend()
+plt.show()

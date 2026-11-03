@@ -1,0 +1,142 @@
+#3B ECG dtaset 
+# Step 1: Import libraries
+import pandas as pd
+import numpy as np
+import matplotlib.pyplot as plt
+
+from sklearn.model_selection import train_test_split
+from sklearn.preprocessing import StandardScaler
+from sklearn.metrics import confusion_matrix, classification_report
+
+from tensorflow.keras.models import Model
+from tensorflow.keras.layers import Input, Dense
+
+# Step 2: Load ECG dataset
+data = pd.read_csv("ecg.csv", header=None)
+
+print("Dataset Shape:", data.shape)
+print(data.head())
+
+# Step 3: Separate features and labels
+X = data.iloc[:, :-1]
+y = data.iloc[:, -1].astype(int)
+
+print("\nClass Distribution:")
+print(y.value_counts())
+
+# Step 4: Split dataset
+X_train_all, X_test, y_train_all, y_test = train_test_split(
+    X, y, test_size=0.2, random_state=42, stratify=y
+)
+
+# Train only on normal ECG samples
+# Assumption: Class 1 = Normal, Class 0 = Abnormal
+X_normal = X_train_all[y_train_all == 1]
+
+# Split normal data into training and validation
+X_train, X_val = train_test_split(
+    X_normal, test_size=0.1, random_state=42
+)
+
+# Step 5: Normalize data
+scaler = StandardScaler()
+
+X_train = scaler.fit_transform(X_train)
+X_val = scaler.transform(X_val)
+X_test = scaler.transform(X_test)
+
+# Step 6: Build Autoencoder
+input_layer = Input(shape=(X_train.shape[1],))
+
+encoded = Dense(64, activation="relu")(input_layer)
+encoded = Dense(32, activation="relu")(encoded)
+encoded = Dense(16, activation="relu")(encoded)
+
+decoded = Dense(32, activation="relu")(encoded)
+decoded = Dense(64, activation="relu")(decoded)
+output_layer = Dense(X_train.shape[1], activation="linear")(decoded)
+
+autoencoder = Model(input_layer, output_layer)
+
+# Step 7: Compile model
+autoencoder.compile(
+    optimizer="adam",
+    loss="mse",
+    metrics=["mae"]
+)
+
+autoencoder.summary()
+
+# Step 8: Train only on normal ECG data
+history = autoencoder.fit(
+    X_train, X_train,
+    epochs=20,
+    batch_size=512,
+    validation_data=(X_val, X_val),
+    shuffle=True
+)
+
+# Step 9: Calculate reconstruction error
+val_predictions = autoencoder.predict(X_val, verbose=0)
+
+val_errors = np.mean(
+    np.square(X_val - val_predictions), axis=1
+)
+
+# Set threshold
+threshold = np.percentile(val_errors, 99)
+
+print("Anomaly Threshold:", threshold)
+
+# Step 10: Detect anomalies
+test_predictions = autoencoder.predict(X_test, verbose=0)
+
+test_errors = np.mean(
+    np.square(X_test - test_predictions), axis=1
+)
+
+y_pred = (test_errors > threshold).astype(int)
+
+# Actual labels: 0 = Normal, 1 = Abnormal
+y_test_anomaly = (y_test == 0).astype(int)
+
+# Step 11: Evaluate model
+print("\nConfusion Matrix:")
+print(confusion_matrix(y_test_anomaly, y_pred))
+
+print("\nClassification Report:")
+print(classification_report(
+    y_test_anomaly, y_pred,
+    target_names=["Normal", "Abnormal"],
+    zero_division=0
+))
+
+print("Number of anomalies detected:", np.sum(y_pred))
+
+# Step 12: Plot training and validation loss
+plt.plot(history.history["loss"], label="Training Loss")
+plt.plot(history.history["val_loss"], label="Validation Loss")
+
+plt.title("Autoencoder Training Loss")
+plt.xlabel("Epochs")
+plt.ylabel("MSE Loss")
+plt.legend()
+plt.show()
+
+# Step 13: Plot reconstruction errors
+plt.figure(figsize=(10, 5))
+
+plt.hist(test_errors[y_test_anomaly == 0],
+         bins=50, alpha=0.6, label="Normal")
+
+plt.hist(test_errors[y_test_anomaly == 1],
+         bins=50, alpha=0.6, label="Abnormal")
+
+plt.axvline(threshold, color="red",
+            linestyle="--", label="Threshold")
+
+plt.title("Normal vs Abnormal ECG Reconstruction Errors")
+plt.xlabel("Reconstruction Error")
+plt.ylabel("Frequency")
+plt.legend()
+plt.show()

@@ -1,0 +1,135 @@
+#3D NASA 
+# Step 1: Import libraries
+import pandas as pd
+import numpy as np
+import matplotlib.pyplot as plt
+
+from sklearn.model_selection import train_test_split
+from sklearn.preprocessing import StandardScaler
+from sklearn.metrics import confusion_matrix, classification_report
+
+from tensorflow.keras.models import Sequential
+from tensorflow.keras.layers import Input, LSTM, RepeatVector, TimeDistributed, Dense
+
+# Step 2: Load dataset
+data = pd.read_csv("NASA TurboFan Engine.csv")
+
+print("Dataset Shape:", data.shape)
+print(data.head())
+
+# Step 3: Separate features and labels
+X = data.drop(["unit", "cycle", "RUL", "Fault_Label"], axis=1)
+y = data["Fault_Label"]
+
+# Step 4: Split dataset
+X_train_all, X_test, y_train_all, y_test = train_test_split(
+    X, y, test_size=0.2, random_state=42, stratify=y
+)
+
+# Use only healthy data for training
+X_normal = X_train_all[y_train_all == 0]
+
+# Split healthy data into training and validation
+X_train, X_val = train_test_split(
+    X_normal, test_size=0.1, random_state=42
+)
+
+# Step 5: Scale sensor readings
+scaler = StandardScaler()
+
+X_train = scaler.fit_transform(X_train)
+X_val = scaler.transform(X_val)
+X_test = scaler.transform(X_test)
+
+# Reshape data for LSTM (samples, time steps, features)
+X_train = X_train.reshape(X_train.shape[0], X_train.shape[1], 1)
+X_val = X_val.reshape(X_val.shape[0], X_val.shape[1], 1)
+X_test = X_test.reshape(X_test.shape[0], X_test.shape[1], 1)
+
+# Step 6: Build LSTM Autoencoder
+model = Sequential([
+    Input(shape=(X_train.shape[1], 1)),
+    LSTM(16),
+    RepeatVector(X_train.shape[1]),
+    LSTM(16, return_sequences=True),
+    TimeDistributed(Dense(1))
+])
+
+# Step 7: Compile model
+model.compile(
+    optimizer="adam",
+    loss="mse",
+    metrics=["mae"]
+)
+
+model.summary()
+
+# Step 8: Train model on healthy data
+history = model.fit(
+    X_train, X_train,
+    epochs=20,
+    batch_size=512,
+    validation_data=(X_val, X_val)
+)
+
+# Step 9: Calculate validation reconstruction error
+val_predictions = model.predict(X_val, verbose=0)
+
+val_errors = np.mean(
+    np.square(X_val - val_predictions), axis=(1, 2)
+)
+
+# Set threshold
+threshold = np.percentile(val_errors, 99)
+
+print("Fault Detection Threshold:", threshold)
+
+# Step 10: Detect faults in test data
+test_predictions = model.predict(X_test, verbose=0)
+
+test_errors = np.mean(
+    np.square(X_test - test_predictions), axis=(1, 2)
+)
+
+y_pred = (test_errors > threshold).astype(int)
+
+# Step 11: Evaluate model
+print("\nConfusion Matrix:")
+print(confusion_matrix(y_test, y_pred))
+
+print("\nClassification Report:")
+print(classification_report(
+    y_test, y_pred,
+    target_names=["Healthy", "Fault"],
+    zero_division=0
+))
+
+print("Detected Faults:", np.sum(y_pred))
+
+# Step 12: Plot training and validation loss
+plt.plot(history.history["loss"], label="Training Loss")
+plt.plot(history.history["val_loss"], label="Validation Loss")
+
+plt.title("LSTM Autoencoder Training Loss")
+plt.xlabel("Epochs")
+plt.ylabel("MSE Loss")
+plt.legend()
+plt.show()
+
+# Step 13: Plot reconstruction errors
+plt.figure(figsize=(10, 5))
+
+plt.hist(test_errors[y_test.values == 0],
+         bins=50, alpha=0.6, label="Healthy")
+
+plt.hist(test_errors[y_test.values == 1],
+         bins=50, alpha=0.6, label="Fault")
+
+plt.axvline(threshold, color="red",
+            linestyle="--", label="Threshold")
+
+plt.title("Healthy vs Fault Reconstruction Errors")
+plt.xlabel("Reconstruction Error")
+plt.ylabel("Frequency")
+plt.legend()
+plt.show()

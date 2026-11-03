@@ -1,0 +1,75 @@
+#4D 
+
+# Step 1: Import libraries
+import pandas as pd
+import numpy as np
+import re
+
+from gensim.models import Word2Vec
+from sklearn.metrics.pairwise import cosine_similarity
+
+# Step 2: Load and preprocess dataset
+df = pd.read_csv("twitter_dataset.csv")
+
+df = df.dropna(subset=["Text"])
+
+tweets = [
+    re.sub(r"[^a-z\s]", "", tweet.lower()).split()
+    for tweet in df["Text"]
+]
+
+print("Total Tweets:", len(tweets))
+print("Sample Tweet:", tweets[0])
+
+# Step 3: Train Word2Vec CBOW model
+cbow = Word2Vec(
+    sentences=tweets,
+    vector_size=100,
+    window=5,
+    min_count=2,
+    sg=0,
+    epochs=10
+)
+
+print("Vocabulary Size:", len(cbow.wv))
+
+# Step 4: Convert tweets into average embeddings
+tweet_embeddings = np.array([
+    cbow.wv.get_mean_vector(
+        [word for word in tweet if word in cbow.wv]
+    )
+    for tweet in tweets
+])
+
+print("Tweet Embeddings Shape:", tweet_embeddings.shape)
+
+# Step 5: Get user input
+user_input = input("Enter a topic or keywords: ")
+
+query_words = [
+    word for word in
+    re.sub(r"[^a-z\s]", "", user_input.lower()).split()
+    if word in cbow.wv
+]
+
+if len(query_words) == 0:
+    print("No matching words found in vocabulary.")
+
+else:
+    # Create user input embedding
+    query_embedding = cbow.wv.get_mean_vector(query_words)
+
+    # Step 6: Calculate cosine similarity
+    similarity = cosine_similarity(
+        [query_embedding], tweet_embeddings
+    )[0]
+
+    # Step 7: Recommend top 5 similar tweets
+    top_indices = np.argsort(similarity)[::-1][:5]
+
+    print("\nRecommended Tweets:\n")
+
+    for index in top_indices:
+        print("Tweet:", df["Text"].iloc[index])
+        print("Similarity:", round(similarity[index], 3))
+        print("-" * 50)

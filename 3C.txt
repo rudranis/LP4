@@ -1,0 +1,173 @@
+#3C  energy consmption
+# Step 1: Import libraries
+import pandas as pd
+import numpy as np
+import matplotlib.pyplot as plt
+
+from sklearn.preprocessing import MinMaxScaler
+from sklearn.model_selection import train_test_split
+from sklearn.metrics import confusion_matrix, classification_report
+
+from tensorflow.keras.models import Sequential
+from tensorflow.keras.layers import LSTM, RepeatVector, TimeDistributed, Dense
+
+# Step 2: Load dataset
+df = pd.read_csv("energy consumption.csv")
+
+print("Dataset Shape:", df.shape)
+print(df.head())
+
+# Step 3: Preprocess data
+df["Timestamp"] = pd.to_datetime(df["Timestamp"], dayfirst=True)
+df = df.sort_values("Timestamp").reset_index(drop=True)
+
+# Separate features and labels
+X = df.drop(["Timestamp", "Anomaly_Label"], axis=1)
+y = df["Anomaly_Label"].astype(int)
+
+# Split data chronologically (80% training, 20% testing)
+split = int(0.8 * len(df))
+
+X_train_raw = X.iloc[:split].copy()
+X_test_raw = X.iloc[split:].copy()
+
+y_train_raw = y.iloc[:split]
+y_test_raw = y.iloc[split:]
+
+# Fill missing values using training medians
+medians = X_train_raw.median()
+
+X_train_raw = X_train_raw.fillna(medians)
+X_test_raw = X_test_raw.fillna(medians)
+
+# Train only on normal data
+X_normal = X_train_raw[y_train_raw == 0]
+
+# Normalize data
+scaler = MinMaxScaler()
+
+X_normal_scaled = scaler.fit_transform(X_normal)
+X_test_scaled = scaler.transform(X_test_raw)
+
+# Step 4: Create time windows
+window_size = 24
+
+def create_sequences(X, y, window_size):
+    X_seq = []
+    y_seq = []
+
+    for i in range(len(X) - window_size + 1):
+        X_seq.append(X[i:i + window_size])
+        y_seq.append(int(np.any(y.iloc[i:i + window_size])))
+
+    return np.array(X_seq), np.array(y_seq)
+
+# Create normal training sequences
+normal_labels = pd.Series(
+    np.zeros(len(X_normal_scaled), dtype=int)
+)
+
+X_seq, y_seq = create_sequences(
+    X_normal_scaled, normal_labels, window_size
+)
+
+# Create test sequences
+X_test_seq, y_test_seq = create_sequences(
+    X_test_scaled, y_test_raw.reset_index(drop=True), window_size
+)
+
+# Split normal sequences into training and validation
+x_train, x_val = train_test_split(
+    X_seq, test_size=0.1, random_state=42
+)
+
+print("Training Shape:", x_train.shape)
+print("Testing Shape:", X_test_seq.shape)
+
+# Step 5: Build LSTM Autoencoder
+model = Sequential([
+    LSTM(32, activation="relu",
+         input_shape=(window_size, X.shape[1])),
+    RepeatVector(window_size),
+    LSTM(32, activation="relu", return_sequences=True),
+    TimeDistributed(Dense(X.shape[1]))
+])
+
+# Step 6: Compile model
+model.compile(
+    optimizer="adam",
+    loss="mse",
+    metrics=["mae"]
+)
+
+model.summary()
+
+# Step 7: Train model on normal data
+history = model.fit(
+    x_train, x_train,
+    epochs=10,
+    batch_size=32,
+    validation_data=(x_val, x_val)
+)
+
+# Step 8: Calculate validation reconstruction error
+val_predictions = model.predict(x_val, verbose=0)
+
+val_errors = np.mean(
+    np.square(x_val - val_predictions), axis=(1, 2)
+)
+
+# Set anomaly threshold
+threshold = np.percentile(val_errors, 99)
+
+print("Anomaly Threshold:", threshold)
+
+# Step 9: Detect anomalies in test data
+test_predictions = model.predict(X_test_seq, verbose=0)
+
+test_errors = np.mean(
+    np.square(X_test_seq - test_predictions), axis=(1, 2)
+)
+
+y_pred = (test_errors > threshold).astype(int)
+
+# Step 10: Evaluate model
+print("\nConfusion Matrix:")
+print(confusion_matrix(y_test_seq, y_pred))
+
+print("\nClassification Report:")
+print(classification_report(
+    y_test_seq, y_pred,
+    target_names=["Normal", "Anomaly"],
+    zero_division=0
+))
+
+print("Detected Anomalies:", np.sum(y_pred))
+
+# Step 11: Plot training and validation loss
+plt.plot(history.history["loss"], label="Training Loss")
+plt.plot(history.history["val_loss"], label="Validation Loss")
+
+plt.title("LSTM Autoencoder Training Loss")
+plt.xlabel("Epochs")
+plt.ylabel("MSE Loss")
+plt.legend()
+plt.show()
+
+# Step 12: Plot reconstruction errors
+plt.figure(figsize=(10, 5))
+
+plt.hist(test_errors[y_test_seq == 0],
+         bins=50, alpha=0.6, label="Normal")
+
+plt.hist(test_errors[y_test_seq == 1],
+         bins=50, alpha=0.6, label="Anomaly")
+
+plt.axvline(threshold, color="red",
+            linestyle="--", label="Threshold")
+
+plt.title("Normal vs Anomaly Reconstruction Errors")
+plt.xlabel("Reconstruction Error")
+plt.ylabel("Frequency")
+plt.legend()
+plt.show()

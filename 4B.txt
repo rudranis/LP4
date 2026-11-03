@@ -1,0 +1,54 @@
+# 4B  twitter
+# Step 1: Import libraries
+import pandas as pd
+import numpy as np
+import re
+from gensim.models import Word2Vec
+
+# Step 2: Load Twitter dataset
+df = pd.read_csv("twitter_dataset.csv")
+
+print("Dataset Shape:", df.shape)
+print(df.head())
+
+# Step 3: Remove missing tweets
+df = df.dropna(subset=["Text"])
+
+# Step 4: Preprocess tweets
+tweets = [
+    re.sub(r"[^a-z\s]", "", tweet.lower()).split()
+    for tweet in df["Text"]
+]
+
+print("Sample Tweet:", tweets[0])
+
+# Step 5: Train Word2Vec CBOW model
+cbow = Word2Vec(
+    sentences=tweets,
+    vector_size=100,
+    window=5,
+    min_count=2,
+    sg=0,
+    epochs=10
+)
+
+print("Vocabulary Size:", len(cbow.wv))
+
+# Step 6: Display word embedding
+word = cbow.wv.index_to_key[0]
+
+print("\nWord:", word)
+print("Embedding:", cbow.wv[word])
+
+# Step 7: Find similar words
+print("\nSimilar Words:")
+print(cbow.wv.most_similar(word, topn=5))
+
+# Step 8: Calculate word similarity
+word1 = cbow.wv.index_to_key[0]
+word2 = cbow.wv.index_to_key[1]
+
+print("\nWord 1:", word1)
+print("Word 2:", word2)
+
+print("Similarity:", cbow.wv.similarity(word1, word2))
